@@ -5,29 +5,32 @@ const britishOnly = require('./british-only.js')
 
 class Translator {
 
+  // Function to reverse a dictionary
+  reverseDictionary(dictionary) {
+    return Object.keys(dictionary).reduce((acc, key) => {
+      acc[dictionary[key]] = key;
+      return acc;
+    }, {});
+  }
+
   // Function to highlight the text
   highlight(text) {
     return `<span class="highlight">${text}</span>`
   }
 
-  // Function to find a value when we have the key
-  findKeyByValue(dictionary, valueToFind) {
-    return Object.keys(dictionary).find(key => dictionary[key] === valueToFind);
-  }
-
-  // Function to replace a phrase with a key
-  replacePhrasesWithKeys(string, dictionary) {
-    Object.values(dictionary).forEach(value => {
-      if (string.includes(value)) {
-        const key = this.findKeyByValue(dictionary, value);
-        string = string.replace(value, this.highlight(key)); 
+  // Function to replace a phrase with a value
+  replacePhrasesWithValues(string, dictionary) {
+    Object.keys(dictionary).forEach(key => {
+      if (string.includes(key)) {
+        const value = dictionary[key];
+        string = string.replace(key, value); 
       }
     });
     return string;
   }
 
   // Function to replace a phrase with a value
-  replacePhrasesWithValues(string, dictionary) {
+  replacePhrasesWithValuesAndHighlight(string, dictionary) {
     Object.keys(dictionary).forEach(key => {
       if (string.includes(key)) {
         const value = dictionary[key];
@@ -37,56 +40,84 @@ class Translator {
     return string;
   }
 
+  // Translate function
+  translate(text, mergeDictionary, title, timeRegex, timeTarget) {
+    let matchDictionary = {}
+    
+    // Filter words with spaces from mergeDictionary
+    const wordsWithSpace = Object.fromEntries(
+      Object.entries(mergeDictionary).filter(([key, value]) => key.includes(" "))
+    );
+
+    // Loop through the words with spaces and and the matching key/value to the matchDictionary
+    Object.entries(wordsWithSpace).map(([key, value]) => {
+      if (text.toLowerCase().includes(key)) {
+        // this is to get the key with the same case as in the text
+        key = text.match(new RegExp(key, "i"))[0];
+        matchDictionary[key] = value;
+      }
+    })
+
+    // Creating table of all simple words (without spaces) from mergeDictionary
+    text.match(/(\w+([-'])(\w+)?['-]?(\w+))|\w+/g).forEach((word) => {
+      if (mergeDictionary[word.toLowerCase()]) {
+        matchDictionary[word] = mergeDictionary[word.toLowerCase()];
+      } 
+    });
+
+    // Finding for titles, assuming that all title words are capitalized in text string
+    Object.entries(title).map(([key, value]) => {
+      let escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Échappe les caractères spéciaux
+      let regex = new RegExp(`\\b${escapedKey}(\\.)?(?!\\w)`, "i");
+      if (text.match(regex)) {
+        key = key.charAt(0).toUpperCase() + key.slice(1);
+        matchDictionary[key] = value.charAt(0).toUpperCase() + value.slice(1);
+      }
+    })
+
+    // Finding time paterns and adding them to the matchDictionary
+    let wordPatternIsFound = text.match(timeRegex);
+    if (wordPatternIsFound) {
+      wordPatternIsFound.forEach(word => {
+        matchDictionary[word] = word.replace(timeRegex, timeTarget);
+      })
+    }
+
+    // console.log(matchDictionary)
+    return matchDictionary;
+  }
+
   // This function is used to pass the req and send back the translation
   main(textToTranlate, language) {
-    let text = textToTranlate.toLowerCase();
+    // console.log(textToTranlate, language)
+    let text = textToTranlate;
     let locale = language;
 
     // Define initial language
     let initialLanguage = locale.split("-")[0];
-    console.log("initial language >>", initialLanguage);
 
-    let finalString = ''
-    
-    // if initial language is american
+    let matchDictionary = {}
+    // Define the parameters in function of language
     if (initialLanguage === "american") {
-      // 1st step: checks for spelling in this language
-      let stepOne = this.replacePhrasesWithKeys(text, americanOnly);
-
-      // 2nd step: checks for titles
-      let stepTwo = this.replacePhrasesWithValues(stepOne, americanToBritishTitles);
-      
-      // 3rd step: checks for spelling in the other language
-      let stepThree = this.replacePhrasesWithValues(stepTwo, americanToBritishSpelling);
-      
-      // 4th step: checks time patterns
-      let stepFour = stepThree.replace(/(\d{1,2}):(\d{2})/g, this.highlight("$1.$2"));
-      finalString = stepFour;
-    }
-    else {
-      // 1st step: checks for spelling in this language
-      let stepOne = this.replacePhrasesWithKeys(text, americanOnly);
-
-      // 2nd step: checks for titles
-      let stepTwo = this.replacePhrasesWithKeys(stepOne, americanToBritishTitles);
-
-      // 3rd step: checks for spelling in the other language
-      let stepThree = this.replacePhrasesWithKeys(stepTwo, americanToBritishSpelling);
-
-      // 4th step: checks time patterns
-      let stepFour = stepThree.replace(/(\d{1,2}).(\d{2})/g, this.highlight("$1:$2"));
-      finalString = stepFour;
+      let mergeDictionary = {...americanOnly, ...americanToBritishSpelling};
+      let title = {...americanToBritishTitles};
+      let timeRegex = /(\d{1,2}):(\d{2})/g
+      let timeTarget = "$1.$2"
+      matchDictionary = this.translate(text, mergeDictionary, title, timeRegex, timeTarget);
+    } else {
+      let mergeDictionary = {...britishOnly, ...this.reverseDictionary(americanToBritishSpelling)};
+      let title = this.reverseDictionary(americanToBritishTitles);
+      let timeRegex = /(\d{1,2}).(\d{2})/g
+      let timeTarget = "$1:$2"
+      matchDictionary = this.translate(text, mergeDictionary, title, timeRegex, timeTarget);
     }
 
-    // Capitalize the first letter
-    finalString = finalString.charAt(0).toUpperCase() + finalString.slice(1);
+    let translatedText = this.replacePhrasesWithValues(text, matchDictionary);
+    let translatedTextWithHighlight = this.replacePhrasesWithValuesAndHighlight(text, matchDictionary);
+    // console.log(translatedText, translatedTextWithHighlight)
 
-    // Check if there is a translation
-    if (finalString === text) {
-      finalString = "Everything looks good to me!";
-    }
 
-    return finalString;
+    return [translatedText, translatedTextWithHighlight];
   }
 }
 
